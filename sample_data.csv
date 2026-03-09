@@ -1,0 +1,17 @@
+product,category,region,revenue,units_sold,quarter
+Widget A,Electronics,North,15000,150,Q1
+Widget B,Electronics,South,22000,220,Q1
+Widget C,Home,East,8500,85,Q1
+Widget D,Fashion,West,12000,120,Q1
+Widget A,Electronics,North,18000,180,Q2
+Widget B,Electronics,South,25000,250,Q2
+Widget C,Home,East,9200,92,Q2
+Widget D,Fashion,West,14500,145,Q2
+Widget A,Electronics,North,21000,210,Q3
+Widget B,Electronics,South,28000,280,Q3
+Widget C,Home,East,11000,110,Q3
+Widget D,Fashion,West,16000,160,Q3
+Widget A,Electronics,North,24000,240,Q4
+Widget B,Electronics,South,31000,310,Q4
+Widget C,Home,East,13500,135,Q4
+Widget D,Fashion,West,19000,190,Q4

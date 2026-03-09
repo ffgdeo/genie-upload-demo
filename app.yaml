@@ -1,0 +1,24 @@
+command:
+  - "python"
+  - "-m"
+  - "uvicorn"
+  - "backend.app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+
+env:
+  # ── Required: Unity Catalog & Warehouse ──
+  - name: UC_CATALOG
+    value: "main"                       # Shared catalog for all users
+  - name: WAREHOUSE_ID
+    value: ""                           # SQL warehouse ID (required)
+
+  # ── Optional overrides ──
+  - name: UPLOAD_VOLUME_NAME
+    value: "raw_upload"                 # Volume name inside each user's schema
+  - name: GENIE_TIMEOUT_S
+    value: "120"                        # Max seconds to wait for Genie response
+  - name: DATABRICKS_PROFILE
+    value: "DEFAULT"                    # CLI profile for local development only
