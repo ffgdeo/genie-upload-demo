@@ -7,9 +7,11 @@ creates Genie Spaces, and provides a natural language chat interface.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
+import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -40,6 +42,9 @@ GENIE_TIMEOUT_S = int(os.environ.get("GENIE_TIMEOUT_S", "120"))
 # FastAPI app
 # ---------------------------------------------------------------------------
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Genie File Upload Demo", version="0.1.0")
 
 app.add_middleware(
@@ -49,6 +54,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch-all so 500s return the real traceback in the response body."""
+    tb = traceback.format_exc()
+    logger.error("Unhandled exception on %s %s:\n%s", request.method, request.url.path, tb)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=500, content={"detail": str(exc), "traceback": tb})
 
 # In-memory session store
 sessions: dict[str, dict[str, Any]] = {}
@@ -100,6 +114,16 @@ def _get_sp_client() -> WorkspaceClient:
     return _sp_client
 
 
+def _resolve_user_email(request: Request) -> str:
+    """Best-effort extraction of the user's email from proxy headers."""
+    return (
+        request.headers.get("X-Forwarded-Email")
+        or request.headers.get("X-Forwarded-Preferred-Username")
+        or request.headers.get("X-Forwarded-User")
+        or ""
+    )
+
+
 def get_user_client(request: Request) -> tuple[WorkspaceClient, str]:
     """Build a WorkspaceClient that acts as the requesting user.
 
@@ -113,24 +137,29 @@ def get_user_client(request: Request) -> tuple[WorkspaceClient, str]:
     """
     if IS_DATABRICKS_APP:
         user_token = request.headers.get("X-Forwarded-Access-Token", "")
-        user_email = request.headers.get("X-Forwarded-Email", "")
+        user_email = _resolve_user_email(request)
 
         if user_token:
             host = os.environ.get("DATABRICKS_HOST", "")
             if host and not host.startswith("http"):
                 host = f"https://{host}"
-            client = WorkspaceClient(host=host, token=user_token)
-            # If the proxy didn't send the email header, resolve it
+            client = WorkspaceClient(host=host, token=user_token, auth_type="pat")
             if not user_email:
-                me = client.current_user.me()
-                user_email = me.user_name or ""
+                try:
+                    me = client.current_user.me()
+                    user_email = me.user_name or ""
+                except Exception:
+                    user_email = "unknown_user"
             return client, user_email
 
         # No user token — fall back to SP, but still use the email header
         sp = _get_sp_client()
         if not user_email:
-            me = sp.current_user.me()
-            user_email = me.user_name or ""
+            try:
+                me = sp.current_user.me()
+                user_email = me.user_name or me.display_name or ""
+            except Exception:
+                user_email = "app_service_principal"
         return sp, user_email
     else:
         # Local dev — use CLI profile
