@@ -114,6 +114,9 @@ env:
 
 ### 3. Build the frontend
 
+> **Important**: The built `frontend/dist` directory must exist before syncing.
+> Without it the app will return `{"detail":"Not Found"}`.
+
 ```bash
 cd frontend && npm install && npm run build && cd ..
 ```
