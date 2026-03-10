@@ -11,9 +11,9 @@ command:
 env:
   # ── Required: Unity Catalog & Warehouse ──
   - name: UC_CATALOG
-    value: "tko27_filipe_catalog"       # Shared catalog for all users
+    value: ""       # Shared catalog for all users
   - name: WAREHOUSE_ID
-    value: "dbf1adf9dcd038cd"           # SQL warehouse ID (required)
+    value: ""           # SQL warehouse ID (required)
 
   # ── Optional overrides ──
   - name: UPLOAD_VOLUME_NAME
