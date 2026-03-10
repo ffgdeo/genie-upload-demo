@@ -4,25 +4,45 @@ sequenceDiagram
     participant FE as React Frontend
     participant BE as FastAPI Backend
     participant SQL as SQL Statement API
+    participant FS as Files API (Volumes)
     participant DR as Data Rooms API
     participant GC as Genie Conversation API
 
     rect rgb(220, 235, 255)
-        Note over U,GC: Phase 1 — File Upload & Table Creation
+        Note over U,GC: Phase 1 — File Upload & Table Creation (per-user schema)
 
         U->>FE: Upload CSV / Excel file
-        FE->>BE: POST /upload (multipart form)
+        FE->>BE: POST /api/upload (multipart form)
         activate BE
-        BE->>BE: Parse file with pandas
-        BE->>SQL: POST /api/2.0/sql/statements<br/>(CREATE TABLE DDL)
+
+        Note right of BE: Resolve user identity from<br/>proxy headers (X-Forwarded-Email)<br/>Derive per-user schema name
+
+        BE->>SQL: CREATE SCHEMA IF NOT EXISTS<br/>catalog.user_schema
         activate SQL
-        SQL-->>BE: statement_id + status OK
+        SQL-->>BE: status OK
         deactivate SQL
-        BE->>SQL: POST /api/2.0/sql/statements<br/>(INSERT INTO — batched rows)
+
+        BE->>SQL: CREATE VOLUME IF NOT EXISTS<br/>catalog.user_schema.raw_upload
         activate SQL
-        SQL-->>BE: statement_id + status OK
+        SQL-->>BE: status OK
         deactivate SQL
-        BE-->>FE: { table_name, schema }
+
+        BE->>FS: PUT /api/2.0/fs/files<br/>Upload raw file to Volume
+        activate FS
+        FS-->>BE: Upload complete
+        deactivate FS
+
+        BE->>SQL: CREATE OR REPLACE TABLE ... AS<br/>SELECT * FROM read_files(volume_path)
+        activate SQL
+        SQL-->>BE: status OK
+        deactivate SQL
+
+        BE->>SQL: DESCRIBE TABLE + SELECT COUNT(*)
+        activate SQL
+        SQL-->>BE: column_info, row_count
+        deactivate SQL
+
+        BE-->>FE: table_name, columns, row_count
         deactivate BE
         FE-->>U: Show table preview + schema
     end
@@ -30,13 +50,13 @@ sequenceDiagram
     rect rgb(220, 255, 230)
         Note over U,GC: Phase 2 — Genie Space Creation
 
-        FE->>BE: POST /create-genie-space<br/>{ table_name }
+        FE->>BE: POST /api/genie/create-space
         activate BE
-        BE->>DR: POST /api/2.0/data-rooms/<br/>{ display_name, warehouse_id,<br/>  table_identifiers, run_as_type }
+        BE->>DR: POST /api/2.0/data-rooms/<br/>display_name, warehouse_id,<br/>table_identifiers, run_as_type
         activate DR
-        DR-->>BE: { space_id }
+        DR-->>BE: space_id
         deactivate DR
-        BE-->>FE: { space_id }
+        BE-->>FE: space_id
         deactivate BE
         FE-->>U: Transition to Chat Interface
     end
@@ -45,29 +65,29 @@ sequenceDiagram
         Note over U,GC: Phase 3 — Natural Language Query (repeatable)
 
         U->>FE: Type a question
-        FE->>BE: POST /query<br/>{ space_id, question }
+        FE->>BE: POST /api/genie/ask<br/>space_id, question
         activate BE
 
         alt First message in conversation
-            BE->>GC: genie.start_conversation_and_wait()<br/>→ POST /api/2.0/genie/spaces/{id}/start-conversation
+            BE->>GC: genie.start_conversation_and_wait()
             activate GC
             GC->>GC: Generate SQL & execute
-            GC-->>BE: { conversation_id, message_id, attachments }
+            GC-->>BE: conversation_id, message_id, attachments
             deactivate GC
         else Follow-up message
-            BE->>GC: genie.create_message_and_wait()<br/>→ POST /api/2.0/genie/spaces/{id}/conversations/{conv_id}/messages<br/>{ conversation_id, content }
+            BE->>GC: genie.create_message_and_wait()<br/>conversation_id, content
             activate GC
             GC->>GC: Generate SQL & execute (with context)
-            GC-->>BE: { message_id, attachments }
+            GC-->>BE: message_id, attachments
             deactivate GC
         end
 
-        BE->>GC: genie.get_message_query_result_by_attachment()<br/>→ GET attachment data rows
+        BE->>GC: genie.get_message_query_result_by_attachment()
         activate GC
-        GC-->>BE: { columns, rows }
+        GC-->>BE: columns, rows
         deactivate GC
 
-        BE-->>FE: { sql_query, data_rows, text_response }
+        BE-->>FE: sql_query, data_rows, text_response
         deactivate BE
         FE->>FE: Render data table
         FE->>FE: Auto-generate chart from data
