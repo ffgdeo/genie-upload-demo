@@ -125,34 +125,14 @@ def _resolve_user_email(request: Request) -> str:
 
 
 def get_user_client(request: Request) -> tuple[WorkspaceClient, str]:
-    """Build a WorkspaceClient that acts as the requesting user.
+    """Return the SDK client and the requesting user's email.
 
-    In Databricks Apps the proxy injects:
-      • X-Forwarded-Access-Token  — user's downscoped OAuth token
-      • X-Forwarded-Email         — user's email
-
-    When user auth is enabled we create a per-request client with the
-    user's token so every API call runs under their identity.
-    Locally (or if no token is present) we fall back to the CLI profile.
+    The proxy headers (X-Forwarded-Email etc.) identify *who* the user
+    is so we can scope schemas/volumes per person.  All API calls go
+    through the service principal which already has the required grants.
     """
     if IS_DATABRICKS_APP:
-        user_token = request.headers.get("X-Forwarded-Access-Token", "")
         user_email = _resolve_user_email(request)
-
-        if user_token:
-            host = os.environ.get("DATABRICKS_HOST", "")
-            if host and not host.startswith("http"):
-                host = f"https://{host}"
-            client = WorkspaceClient(host=host, token=user_token, auth_type="pat")
-            if not user_email:
-                try:
-                    me = client.current_user.me()
-                    user_email = me.user_name or ""
-                except Exception:
-                    user_email = "unknown_user"
-            return client, user_email
-
-        # No user token — fall back to SP, but still use the email header
         sp = _get_sp_client()
         if not user_email:
             try:
