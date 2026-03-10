@@ -116,30 +116,16 @@ env:
     value: "abc123def456"
 ```
 
-### 3. Build the frontend
+### 3. Sync & deploy
 
-> **Important**: The built `frontend/dist` directory must exist before syncing.
-> Without it the app will return `{"detail":"Not Found"}`.
-
-```bash
-cd frontend && npm install && npm run build && cd ..
-```
-
-### 4. Sync & deploy
-
-`databricks sync` respects excludes but does **not** upload `frontend/dist` (it's not git-tracked), so you need a separate `import-dir` step:
+The pre-built frontend (`frontend/dist`) is included in the repository, so no build step is needed.
 
 ```bash
-# Sync source files
+# Sync all files to workspace
 databricks sync . /Workspace/Users/<you>/<app-name> \
   --exclude node_modules --exclude .venv --exclude __pycache__ \
   --exclude .git --exclude "frontend/src" --exclude "frontend/public" \
   -p <profile> --watch=false
-
-# Upload the built frontend (sync won't include it)
-databricks workspace import-dir frontend/dist \
-  /Workspace/Users/<you>/<app-name>/frontend/dist \
-  -p <profile>
 
 # Deploy
 databricks apps deploy <app-name> \
@@ -147,7 +133,7 @@ databricks apps deploy <app-name> \
   -p <profile>
 ```
 
-### 5. Grant the service principal permissions
+### 4. Grant the service principal permissions
 
 The app's auto-created service principal needs catalog and warehouse access. Find the SP ID first:
 
@@ -171,7 +157,7 @@ databricks api patch /api/2.0/permissions/sql/warehouses/<warehouse-id> \
   -p <profile>
 ```
 
-### 6. Verify
+### 5. Verify
 
 Open the app URL and upload a CSV. You can check the auth mode at:
 
@@ -183,8 +169,8 @@ GET https://<app-url>/api/whoami
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `{"detail":"Not Found"}` on every route | `frontend/dist` missing from workspace | Run `npm run build` then `databricks workspace import-dir frontend/dist ...` |
-| `Failed to create schema: PERMISSION_DENIED` | SP lacks catalog grants | Grant `USE_CATALOG` + `CREATE_SCHEMA` (see step 5) |
+| `{"detail":"Not Found"}` on every route | `frontend/dist` missing from workspace | Re-run `databricks sync` — the built frontend is included in the repo |
+| `Failed to create schema: PERMISSION_DENIED` | SP lacks catalog grants | Grant `USE_CATALOG` + `CREATE_SCHEMA` (see step 4) |
 | `is not a valid endpoint id` | `WAREHOUSE_ID` empty or wrong | Set the correct warehouse ID in `app.yaml` and redeploy |
 | `Schema ... does not exist` after CREATE SCHEMA | SQL context params reference non-existent schema | All SQL uses fully-qualified names; `catalog`/`schema` context params should be omitted |
 | `more than one authorization method configured` | User token + SP env vars conflict | Fixed — app uses SP for API calls, not user tokens |
