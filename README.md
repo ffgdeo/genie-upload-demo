@@ -5,7 +5,7 @@ A Databricks App that lets users upload CSV/Excel files and instantly ask natura
 ## What it does
 
 1. **Upload** a CSV or Excel file through the browser.
-2. The backend creates a **per-user Unity Catalog schema**, uploads the raw file to a **UC Volume**, and materialises a **Delta table** via `read_files()`.
+2. The backend creates a **per-user Unity Catalog schema** (derived from the user's email), uploads the raw file to a **UC Volume** (`raw_upload`), and materialises a **Delta table** via `read_files()`.
 3. A **Genie Space** is automatically created on that table.
 4. Users chat with their data in a **natural-language interface** — Genie translates questions to SQL, executes them, and returns tables + auto-generated charts.
 5. A live **API Activity Log** panel shows every Databricks API call in real time so you can see exactly what happens under the hood.
@@ -42,11 +42,15 @@ Browser (React)
 │   └── ...
 ```
 
-### User authentication
+### How authentication works
 
-When deployed as a Databricks App with **user authorization enabled**, the app reads the authenticated user's identity and OAuth token from the proxy headers (`X-Forwarded-Email`, `X-Forwarded-Access-Token`). All API calls (SQL execution, file upload, Genie queries) run under **the user's own identity**, not the service principal.
+The app uses a **hybrid auth model**:
 
-When user auth is not enabled (or during local development), the app falls back to the service principal / CLI profile.
+- **User identification**: The Databricks Apps proxy injects headers (`X-Forwarded-Email`, `X-Forwarded-User`) that identify the authenticated user. The app uses this to derive the per-user schema name (e.g. `filipe.deo@databricks.com` → schema `filipe_deo`).
+- **API calls**: All Databricks API calls (SQL execution, file uploads, Genie queries) are made through the app's **service principal**, which is automatically created when the app is deployed. This avoids OAuth scope issues with user-delegated tokens.
+- **Local development**: Uses your Databricks CLI profile for both identity and API calls.
+
+The `/api/whoami` endpoint shows the current auth mode and resolved user email.
 
 ## Configuration
 
@@ -64,7 +68,7 @@ All settings are controlled via **environment variables** (set in `app.yaml` for
 
 - A Databricks workspace with **Unity Catalog** enabled
 - A **SQL Warehouse** (serverless recommended)
-- The deploying user / service principal needs:
+- The app's service principal needs:
   - `USE_CATALOG` + `CREATE_SCHEMA` on the target catalog
   - `CAN_USE` on the SQL warehouse
 
@@ -95,7 +99,7 @@ npm run dev    # http://localhost:5173 (proxies API to :8000)
 ### 1. Create the app
 
 ```bash
-databricks apps create genie-upload-demo \
+databricks apps create <app-name> \
   --description "Upload files and query with Genie" \
   -p <profile>
 ```
@@ -123,49 +127,68 @@ cd frontend && npm install && npm run build && cd ..
 
 ### 4. Sync & deploy
 
+`databricks sync` respects excludes but does **not** upload `frontend/dist` (it's not git-tracked), so you need a separate `import-dir` step:
+
 ```bash
-databricks sync . /Workspace/Users/<you>/genie-upload-demo \
+# Sync source files
+databricks sync . /Workspace/Users/<you>/<app-name> \
   --exclude node_modules --exclude .venv --exclude __pycache__ \
   --exclude .git --exclude "frontend/src" --exclude "frontend/public" \
   -p <profile> --watch=false
 
-databricks apps deploy genie-upload-demo \
-  --source-code-path /Workspace/Users/<you>/genie-upload-demo \
+# Upload the built frontend (sync won't include it)
+databricks workspace import-dir frontend/dist \
+  /Workspace/Users/<you>/<app-name>/frontend/dist \
+  -p <profile>
+
+# Deploy
+databricks apps deploy <app-name> \
+  --source-code-path /Workspace/Users/<you>/<app-name> \
   -p <profile>
 ```
 
 ### 5. Grant the service principal permissions
 
-The app's auto-created service principal needs catalog access:
+The app's auto-created service principal needs catalog and warehouse access. Find the SP ID first:
 
 ```bash
-# Find the SP ID from the app details
-databricks apps get genie-upload-demo -p <profile>
+databricks apps get <app-name> -p <profile>
+# Look for "service_principal_client_id" in the output
+```
 
-# Grant catalog permissions
+Grant catalog permissions:
+
+```bash
 databricks grants update catalog <my_catalog> -p <profile> \
   --json '{"changes": [{"principal": "<sp-id>", "add": ["USE_CATALOG", "CREATE_SCHEMA"]}]}'
 ```
 
-Grant warehouse access via the REST API:
+Grant warehouse access:
 
 ```bash
-# Replace <warehouse-id> and <sp-id>
 databricks api patch /api/2.0/permissions/sql/warehouses/<warehouse-id> \
   --json '{"access_control_list": [{"service_principal_name": "<sp-id>", "permission_level": "CAN_USE"}]}' \
   -p <profile>
 ```
 
-### 6. Enable user authorization (recommended)
+### 6. Verify
 
-To have the app operate under each user's identity instead of the service principal:
+Open the app URL and upload a CSV. You can check the auth mode at:
 
-1. Go to **Compute > Apps > genie-upload-demo > Edit**
-2. Enable **User authorization**
-3. Add OAuth scopes: `sql`, `unity-catalog`, `genie`
-4. Redeploy
+```
+GET https://<app-url>/api/whoami
+```
 
-Verify with: `GET https://<app-url>/api/whoami`
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `{"detail":"Not Found"}` on every route | `frontend/dist` missing from workspace | Run `npm run build` then `databricks workspace import-dir frontend/dist ...` |
+| `Failed to create schema: PERMISSION_DENIED` | SP lacks catalog grants | Grant `USE_CATALOG` + `CREATE_SCHEMA` (see step 5) |
+| `is not a valid endpoint id` | `WAREHOUSE_ID` empty or wrong | Set the correct warehouse ID in `app.yaml` and redeploy |
+| `Schema ... does not exist` after CREATE SCHEMA | SQL context params reference non-existent schema | All SQL uses fully-qualified names; `catalog`/`schema` context params should be omitted |
+| `more than one authorization method configured` | User token + SP env vars conflict | Fixed — app uses SP for API calls, not user tokens |
+| Upload fails with no detail | Unhandled exception | Check the response body — a global exception handler returns the full traceback |
 
 ## Tech stack
 
